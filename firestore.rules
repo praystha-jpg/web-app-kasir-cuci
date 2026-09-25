@@ -1,0 +1,101 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAppAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'praystha@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // Default deny all unknown paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Test connection document for initial app boot
+    match /test/{testId} {
+      allow read: if isSignedIn();
+      allow write: if isVerifiedUser();
+    }
+
+    // Transactions collection - wash orders and sales
+    match /transactions/{transactionId} {
+      allow read: if isSignedIn();
+      allow create: if isVerifiedUser() && isValidId(transactionId) &&
+        request.resource.data.keys().hasAll(['id', 'price', 'timestamp']) &&
+        request.resource.data.price is number &&
+        request.resource.data.timestamp is string;
+      allow update: if isVerifiedUser() && isValidId(transactionId) &&
+        request.resource.data.price is number;
+      allow delete: if isVerifiedUser() && isValidId(transactionId);
+    }
+
+    // Employees collection - technicians and staff
+    match /employees/{employeeId} {
+      allow read: if isSignedIn();
+      allow create, update: if isVerifiedUser() && isValidId(employeeId) &&
+        request.resource.data.keys().hasAll(['id', 'name', 'role', 'isActive']) &&
+        request.resource.data.name is string && request.resource.data.name.size() <= 100;
+      allow delete: if isVerifiedUser() && isValidId(employeeId);
+    }
+
+    // Vehicle types and pricing matrix
+    match /vehicleTypes/{vehicleTypeId} {
+      allow read: if isSignedIn();
+      allow create, update: if isVerifiedUser() && isValidId(vehicleTypeId) &&
+        request.resource.data.keys().hasAll(['id', 'name']) &&
+        request.resource.data.name is string;
+      allow delete: if isVerifiedUser() && isValidId(vehicleTypeId);
+    }
+
+    // Drinks and F&B products
+    match /drinks/{drinkId} {
+      allow read: if isSignedIn();
+      allow create, update: if isVerifiedUser() && isValidId(drinkId) &&
+        request.resource.data.keys().hasAll(['id', 'name', 'price']) &&
+        request.resource.data.name is string &&
+        request.resource.data.price is number;
+      allow delete: if isVerifiedUser() && isValidId(drinkId);
+    }
+
+    // Car category presets
+    match /carCategories/{categoryId} {
+      allow read: if isSignedIn();
+      allow create, update: if isVerifiedUser() && isValidId(categoryId) &&
+        request.resource.data.keys().hasAll(['id', 'name', 'defaultSize']) &&
+        request.resource.data.name is string;
+      allow delete: if isVerifiedUser() && isValidId(categoryId);
+    }
+
+    // Motorcycle category presets
+    match /motorCategories/{categoryId} {
+      allow read: if isSignedIn();
+      allow create, update: if isVerifiedUser() && isValidId(categoryId) &&
+        request.resource.data.keys().hasAll(['id', 'name', 'defaultSize']) &&
+        request.resource.data.name is string;
+      allow delete: if isVerifiedUser() && isValidId(categoryId);
+    }
+
+    // Global settings documents (shop, wageConfig, security)
+    match /settings/{settingId} {
+      allow read: if isSignedIn();
+      allow create, update: if isVerifiedUser() && isValidId(settingId);
+      allow delete: if isAppAdmin() && isValidId(settingId);
+    }
+  }
+}

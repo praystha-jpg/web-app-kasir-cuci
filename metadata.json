@@ -1,0 +1,8 @@
+{
+  "name": "CuciCepat Pro",
+  "description": "Aplikasi kasir cerdas untuk usaha cuci mobil dan motor dengan laporan pendapatan terintegrasi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

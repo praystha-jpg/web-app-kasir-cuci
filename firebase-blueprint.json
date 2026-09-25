@@ -1,0 +1,226 @@
+{
+  "entities": {
+    "Transaction": {
+      "title": "Transaction",
+      "description": "A car or bike wash service transaction with item details, payment status, and employee assignment",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique transaction ID"
+        },
+        "orderNumber": {
+          "type": "string",
+          "description": "Daily sequential order number"
+        },
+        "vehicleTypeId": {
+          "type": "string",
+          "description": "ID of vehicle type"
+        },
+        "vehicleTypeName": {
+          "type": "string",
+          "description": "Name of vehicle type (Mobil, Motor, etc.)"
+        },
+        "plateNumber": {
+          "type": "string",
+          "description": "Vehicle license plate number"
+        },
+        "carCategory": {
+          "type": "string",
+          "description": "Detected model or category"
+        },
+        "size": {
+          "type": "string",
+          "description": "Vehicle size classification"
+        },
+        "price": {
+          "type": "number",
+          "description": "Total transaction price"
+        },
+        "paymentMethod": {
+          "type": "string",
+          "description": "Payment method used"
+        },
+        "amountPaid": {
+          "type": "number",
+          "description": "Cash amount tendered"
+        },
+        "changeAmount": {
+          "type": "number",
+          "description": "Change returned to customer"
+        },
+        "customerPhone": {
+          "type": "string",
+          "description": "Customer WhatsApp phone number"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Special transaction notes"
+        },
+        "employeeId": {
+          "type": "string",
+          "description": "Primary employee ID"
+        },
+        "employeeName": {
+          "type": "string",
+          "description": "Primary employee name"
+        },
+        "employeeWage": {
+          "type": "number",
+          "description": "Calculated employee commission"
+        },
+        "cashierName": {
+          "type": "string",
+          "description": "Name of cashier recording the order"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "ISO timestamp string"
+        }
+      },
+      "required": ["id", "price", "timestamp"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Carwash technician or staff member",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique employee ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Employee full name"
+        },
+        "phone": {
+          "type": "string",
+          "description": "Phone number"
+        },
+        "role": {
+          "type": "string",
+          "description": "Employee role title"
+        },
+        "wageType": {
+          "type": "string",
+          "description": "Wage calculation model"
+        },
+        "wageAmount": {
+          "type": "number",
+          "description": "Base wage amount"
+        },
+        "motorWageAmount": {
+          "type": "number",
+          "description": "Motorcycle wash wage amount"
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Whether employee is currently active"
+        }
+      },
+      "required": ["id", "name", "role", "isActive"]
+    },
+    "VehicleType": {
+      "title": "VehicleType",
+      "description": "Vehicle service type with pricing matrix per size",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique vehicle type ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Type name (e.g. Mobil Cuci Salju)"
+        }
+      },
+      "required": ["id", "name"]
+    },
+    "Drink": {
+      "title": "Drink",
+      "description": "Beverage or add-on product sold at cashier",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique drink ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Drink name"
+        },
+        "price": {
+          "type": "number",
+          "description": "Selling price"
+        }
+      },
+      "required": ["id", "name", "price"]
+    },
+    "PresetCategory": {
+      "title": "PresetCategory",
+      "description": "Vehicle model preset with default size classification",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Preset ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Preset category name"
+        },
+        "defaultSize": {
+          "type": "string",
+          "description": "Default vehicle size (Kecil, Sedang, Besar)"
+        },
+        "examples": {
+          "type": "string",
+          "description": "Comma-separated example models"
+        }
+      },
+      "required": ["id", "name", "defaultSize"]
+    },
+    "AppSetting": {
+      "title": "AppSetting",
+      "description": "Global application setting document",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Setting document identifier"
+        }
+      },
+      "required": ["id"]
+    }
+  },
+  "firestore": {
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "All customer wash and beverage sales records"
+    },
+    "/employees/{employeeId}": {
+      "schema": "Employee",
+      "description": "Staff and carwash technicians directory"
+    },
+    "/vehicleTypes/{vehicleTypeId}": {
+      "schema": "VehicleType",
+      "description": "Wash service packages and vehicle size prices"
+    },
+    "/drinks/{drinkId}": {
+      "schema": "Drink",
+      "description": "F&B items available in the cashier system"
+    },
+    "/carCategories/{categoryId}": {
+      "schema": "PresetCategory",
+      "description": "Car model classification presets"
+    },
+    "/motorCategories/{categoryId}": {
+      "schema": "PresetCategory",
+      "description": "Motorcycle model classification presets"
+    },
+    "/settings/{settingId}": {
+      "schema": "AppSetting",
+      "description": "Store profile, wage config, and security configurations"
+    }
+  }
+}
