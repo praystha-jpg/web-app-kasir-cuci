@@ -41,6 +41,11 @@
           "type": "string",
           "description": "Payment method used"
         },
+        "paymentStatus": {
+          "type": "string",
+          "description": "Payment settlement status: paid or unpaid",
+          "enum": ["paid", "unpaid"]
+        },
         "amountPaid": {
           "type": "number",
           "description": "Cash amount tendered"

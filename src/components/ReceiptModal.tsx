@@ -16,6 +16,12 @@ import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO } from 'date-fns';
 import { id as idLoc } from 'date-fns/locale';
 import { type Transaction, cn } from '../lib/utils';
+import { 
+  generateWhatsAppReceiptText, 
+  generateWhatsAppReceiptUrl, 
+  formatPhoneNumberDisplay, 
+  openWhatsAppReceipt 
+} from '../lib/whatsapp';
 
 interface ReceiptModalProps {
   transaction: Transaction | null;
@@ -41,6 +47,10 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
 
   if (!isOpen || !transaction) return null;
 
+  const shopProfile = { shopName, shopAddress, shopPhone };
+  const hasCustomerPhone = !!(transaction.customerPhone && transaction.customerPhone.trim() && transaction.customerPhone !== '-');
+  const whatsappUrl = generateWhatsAppReceiptUrl(transaction, shopProfile);
+
   const formatCurrency = (val: number) => {
     return 'Rp ' + (val || 0).toLocaleString('id-ID');
   };
@@ -60,37 +70,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
 
   // Generate plain text receipt for sharing (WhatsApp, SMS, Clipboard)
   const generateReceiptText = () => {
-    const lines = [
-      `=============================`,
-      `       *${shopName.toUpperCase()}*`,
-      `   ${shopAddress}`,
-      `      Telp: ${shopPhone}`,
-      `=============================`,
-      `No. Nota   : #${orderNum}`,
-      `Tanggal    : ${dateStr}`,
-      `No. Plat   : ${transaction.plateNumber || '-'}`,
-      transaction.carCategory ? `Tipe/Model : ${transaction.carCategory}` : '',
-      transaction.size ? `Ukuran     : ${transaction.size}` : '',
-      transaction.employeeName ? `Petugas    : ${transaction.employeeName}` : '',
-      `Metode     : ${getPaymentLabel(transaction.paymentMethod)}`,
-      `-----------------------------`,
-      `*RINCIAN LAYANAN:*`,
-      ...transaction.items.map(item => {
-        const subtotal = item.price * (item.quantity || 1);
-        return `${item.name}${item.quantity > 1 ? ` (x${item.quantity})` : ''} : ${formatCurrency(subtotal)}`;
-      }),
-      `-----------------------------`,
-      `*TOTAL TAGIHAN : ${formatCurrency(transaction.price)}*`,
-      transaction.amountPaid && transaction.amountPaid > 0 ? `Jumlah Bayar  : ${formatCurrency(transaction.amountPaid)}` : '',
-      transaction.changeAmount && transaction.changeAmount > 0 ? `Kembalian     : ${formatCurrency(transaction.changeAmount)}` : '',
-      `=============================`,
-      `Terima kasih atas kunjungan Anda!`,
-      `Kendaraan bersih, hati senang.`,
-      `Simpan nota ini sebagai bukti transaksi sah.`,
-      `=============================`
-    ].filter(Boolean);
-
-    return lines.join('\n');
+    return generateWhatsAppReceiptText(transaction, shopProfile);
   };
 
   const handleCopyText = async () => {
@@ -105,20 +85,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   };
 
   const handleShareWhatsApp = (customNumber?: string) => {
-    const text = encodeURIComponent(generateReceiptText());
-    let targetNum = customNumber || phoneInput || transaction.customerPhone || '';
-    
-    // Normalize Indonesian numbers: 08xxx -> 628xxx
-    targetNum = targetNum.replace(/[^0-9]/g, '');
-    if (targetNum.startsWith('0')) {
-      targetNum = '62' + targetNum.slice(1);
-    }
-
-    const waUrl = targetNum 
-      ? `https://wa.me/${targetNum}?text=${text}`
-      : `https://api.whatsapp.com/send?text=${text}`;
-      
-    window.open(waUrl, '_blank', 'noopener,noreferrer');
+    openWhatsAppReceipt(transaction, shopProfile, customNumber);
   };
 
   const handlePrint = () => {
@@ -162,7 +129,52 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
         </div>
 
         {/* Scrollable Receipt Preview */}
-        <div className="overflow-y-auto p-5 sm:p-6 bg-slate-50/50 print:bg-white print:p-0 print:overflow-visible">
+        <div className="overflow-y-auto p-4 sm:p-5 bg-slate-50/50 print:bg-white print:p-0 print:overflow-visible space-y-3">
+          {/* Automatic WhatsApp Banner if phone number is present */}
+          {hasCustomerPhone && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 print:hidden shadow-xs space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                    <MessageSquare size={16} />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-emerald-900 leading-tight">
+                      Ringkasan Nota WhatsApp Pelanggan
+                    </p>
+                    <p className="text-[11px] text-emerald-700 font-bold font-mono">
+                      {formatPhoneNumberDisplay(transaction.customerPhone || '')}
+                    </p>
+                  </div>
+                </div>
+                <span className="px-2 py-0.5 bg-emerald-200 text-emerald-800 text-[10px] font-bold rounded-full">
+                  Link Siap
+                </span>
+              </div>
+              <div className="flex items-center gap-2 pt-1 border-t border-emerald-200/60">
+                <a
+                  href={whatsappUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm shadow-emerald-200 text-center cursor-pointer"
+                >
+                  <Share2 size={13} />
+                  <span>Kirim Nota ke WhatsApp</span>
+                  <ExternalLink size={12} />
+                </a>
+                <button
+                  type="button"
+                  onClick={handleCopyText}
+                  className="py-2 px-3 bg-white hover:bg-emerald-100 border border-emerald-300 text-emerald-800 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                  title="Salin Teks Nota WA"
+                >
+                  {copied ? <Check size={13} /> : <Copy size={13} />}
+                  <span>{copied ? 'Tersalin' : 'Salin'}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Paper Receipt Styling */}
           <div 
             ref={receiptRef}
@@ -203,6 +215,17 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                   <span className="font-bold text-slate-800">{transaction.size}</span>
                 </div>
               )}
+              <div className="flex justify-between items-center py-0.5">
+                <span className="text-slate-500">Status Bayar:</span>
+                <span className={cn(
+                  "font-black px-2 py-0.5 rounded text-[10px] uppercase border",
+                  transaction.paymentStatus === 'unpaid'
+                    ? "bg-rose-50 text-rose-700 border-rose-300"
+                    : "bg-emerald-50 text-emerald-700 border-emerald-300"
+                )}>
+                  {transaction.paymentStatus === 'unpaid' ? 'Belum Lunas' : 'LUNAS'}
+                </span>
+              </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Metode Bayar:</span>
                 <span className="font-bold text-slate-800">{getPaymentLabel(transaction.paymentMethod)}</span>
@@ -259,6 +282,18 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                   <span>{formatCurrency(transaction.changeAmount)}</span>
                 </div>
               )}
+
+              {/* Status Stamp */}
+              <div className="pt-2 pb-1 text-center">
+                <span className={cn(
+                  "inline-block px-3 py-1 rounded-lg text-xs font-black uppercase tracking-widest border-2",
+                  transaction.paymentStatus === 'unpaid'
+                    ? "border-rose-500 text-rose-600 bg-rose-50"
+                    : "border-emerald-600 text-emerald-700 bg-emerald-50"
+                )}>
+                  {transaction.paymentStatus === 'unpaid' ? '⚠️ BELUM LUNAS' : '✓ LUNAS'}
+                </span>
+              </div>
             </div>
 
             {/* Footer Notice */}
@@ -317,19 +352,27 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
             </button>
 
             {/* WhatsApp Share Button */}
-            <button
-              onClick={() => {
-                if (transaction.customerPhone) {
-                  handleShareWhatsApp(transaction.customerPhone);
-                } else {
-                  setShowWaInput(!showWaInput);
-                }
-              }}
-              className="py-3 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-xs flex flex-col items-center justify-center gap-1 transition-all shadow-md active:scale-95"
-            >
-              <Share2 size={16} />
-              <span>Kirim WA</span>
-            </button>
+            {hasCustomerPhone ? (
+              <a
+                href={whatsappUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="py-3 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-xs flex flex-col items-center justify-center gap-1 transition-all shadow-md active:scale-95 text-center cursor-pointer"
+                title="Buka WhatsApp Pelanggan"
+              >
+                <Share2 size={16} />
+                <span>Kirim WA</span>
+              </a>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowWaInput(!showWaInput)}
+                className="py-3 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-xs flex flex-col items-center justify-center gap-1 transition-all shadow-md active:scale-95 cursor-pointer"
+              >
+                <Share2 size={16} />
+                <span>Kirim WA</span>
+              </button>
+            )}
 
             {/* Copy Text Button */}
             <button

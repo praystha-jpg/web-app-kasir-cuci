@@ -20,6 +20,7 @@ export interface CarCategoryPreset {
 }
 
 export type PaymentMethod = 'cash' | 'qris' | 'transfer' | 'debit';
+export type PaymentStatus = 'paid' | 'unpaid';
 export type WageType = 'split_unit_pool' | 'commission_fixed' | 'commission_percentage' | 'daily';
 
 export interface WageUnitConfig {
@@ -56,6 +57,7 @@ export interface Transaction {
   size?: VehicleSize;
   price: number;
   paymentMethod?: PaymentMethod;
+  paymentStatus?: PaymentStatus;
   amountPaid?: number;
   changeAmount?: number;
   customerPhone?: string;

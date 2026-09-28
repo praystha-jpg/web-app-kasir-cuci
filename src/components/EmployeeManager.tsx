@@ -47,14 +47,14 @@ export const EmployeeManager: React.FC<EmployeeManagerProps> = ({
 
   // Wage Pool Config local editing
   const [isEditingScheme, setIsEditingScheme] = useState(false);
-  const [carWage, setCarWage] = useState<number>(wageUnitConfig.carUnitWage || 15000);
+  const [carWage, setCarWage] = useState<number>(wageUnitConfig.carUnitWage || 10000);
   const [motorWage, setMotorWage] = useState<number>(wageUnitConfig.motorUnitWage || 5000);
   const [wageModel, setWageModel] = useState<'fixed_per_unit' | 'percentage_per_unit'>(wageUnitConfig.wageModel || 'fixed_per_unit');
   const [percentageRate, setPercentageRate] = useState<number>(wageUnitConfig.percentageRate || 25);
 
   // Sync when prop updates
   useEffect(() => {
-    setCarWage(wageUnitConfig.carUnitWage || 15000);
+    setCarWage(wageUnitConfig.carUnitWage || 10000);
     setMotorWage(wageUnitConfig.motorUnitWage || 5000);
     setWageModel(wageUnitConfig.wageModel || 'fixed_per_unit');
     setPercentageRate(wageUnitConfig.percentageRate || 25);
@@ -65,7 +65,7 @@ export const EmployeeManager: React.FC<EmployeeManagerProps> = ({
   const [phone, setPhone] = useState('');
   const [role, setRole] = useState('Washer Mobil & Motor');
   const [wageType, setWageType] = useState<WageType>('split_unit_pool');
-  const [wageAmount, setWageAmount] = useState<number>(15000);
+  const [wageAmount, setWageAmount] = useState<number>(10000);
   const [motorWageAmount, setMotorWageAmount] = useState<number>(5000);
   const [isActive, setIsActive] = useState(true);
 
@@ -75,7 +75,7 @@ export const EmployeeManager: React.FC<EmployeeManagerProps> = ({
     setPhone('');
     setRole('Washer Mobil & Motor');
     setWageType('split_unit_pool');
-    setWageAmount(15000);
+    setWageAmount(10000);
     setMotorWageAmount(5000);
     setIsActive(true);
     setIsModalOpen(true);
@@ -97,7 +97,7 @@ export const EmployeeManager: React.FC<EmployeeManagerProps> = ({
     e.preventDefault();
     if (onUpdateWageUnitConfig) {
       onUpdateWageUnitConfig({
-        carUnitWage: Number(carWage) || 15000,
+        carUnitWage: Number(carWage) || 10000,
         motorUnitWage: Number(motorWage) || 5000,
         wageModel,
         percentageRate: Number(percentageRate) || 25,
@@ -158,7 +158,7 @@ export const EmployeeManager: React.FC<EmployeeManagerProps> = ({
     );
   };
 
-  const currentCarPool = wageUnitConfig.carUnitWage || 15000;
+  const currentCarPool = wageUnitConfig.carUnitWage || 10000;
   const currentMotorPool = wageUnitConfig.motorUnitWage || 5000;
 
   return (

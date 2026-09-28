@@ -15,7 +15,8 @@ import {
   Calculator,
   Users,
   UserCheck,
-  Scale
+  Scale,
+  AlertCircle
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { 
@@ -26,16 +27,19 @@ import {
   type Employee,
   type AssignedEmployee,
   type WageUnitConfig,
+  type PaymentStatus,
   INITIAL_WAGE_UNIT_CONFIG,
   calculateSplitUnitWage,
   cn 
 } from '../lib/utils';
+import { normalizeWhatsAppNumber, formatPhoneNumberDisplay } from '../lib/whatsapp';
 
 interface PaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConfirmPayment: (paymentDetails: {
     paymentMethod: PaymentMethod;
+    paymentStatus?: PaymentStatus;
     amountPaid: number;
     changeAmount: number;
     customerPhone: string;
@@ -46,6 +50,7 @@ interface PaymentModalProps {
     assignedEmployees?: AssignedEmployee[];
     totalUnitWage?: number;
     wagePerPerson?: number;
+    autoSendWhatsApp?: boolean;
   }) => void;
   totalAmount: number;
   selectedVehicle: VehicleType | null;
@@ -75,8 +80,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   wageUnitConfig = INITIAL_WAGE_UNIT_CONFIG,
 }) => {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
+  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('paid');
   const [cashGiven, setCashGiven] = useState<string>(totalAmount.toString());
   const [customerPhone, setCustomerPhone] = useState<string>('');
+  const [autoSendWhatsApp, setAutoSendWhatsApp] = useState<boolean>(true);
   const [notes, setNotes] = useState<string>('');
   
   // Multi-employee selection for split unit wage
@@ -108,7 +115,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
   const numCashGiven = parseInt(cashGiven.replace(/[^0-9]/g, ''), 10) || 0;
   const changeAmount = Math.max(0, numCashGiven - totalAmount);
-  const isCashShort = paymentMethod === 'cash' && numCashGiven < totalAmount;
+  const isCashShort = paymentStatus === 'paid' && paymentMethod === 'cash' && numCashGiven < totalAmount;
 
   const activeEmployees = employees.filter(e => e.isActive);
   const selectedEmps = employees.filter(e => selectedEmployeeIds.includes(e.id));
@@ -155,8 +162,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
     onConfirmPayment({
       paymentMethod,
-      amountPaid: paymentMethod === 'cash' ? numCashGiven : totalAmount,
-      changeAmount: paymentMethod === 'cash' ? changeAmount : 0,
+      paymentStatus,
+      amountPaid: paymentStatus === 'unpaid' ? 0 : (paymentMethod === 'cash' ? numCashGiven : totalAmount),
+      changeAmount: (paymentStatus === 'unpaid' || paymentMethod !== 'cash') ? 0 : changeAmount,
       customerPhone: customerPhone.trim(),
       notes: notes.trim(),
       employeeId: selectedEmps.length > 0 ? selectedEmps.map(e => e.id).join(',') : undefined,
@@ -165,6 +173,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       assignedEmployees,
       totalUnitWage,
       wagePerPerson,
+      autoSendWhatsApp: customerPhone.trim() ? autoSendWhatsApp : false,
     });
   };
 
@@ -332,6 +341,51 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             </div>
           )}
 
+          {/* Status Pembayaran (Lunas / Belum Lunas) */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                Status Pembayaran
+              </label>
+              <span className={cn(
+                "text-[10px] font-black uppercase px-2 py-0.5 rounded-full border",
+                paymentStatus === 'unpaid'
+                  ? "bg-rose-100 text-rose-800 border-rose-300"
+                  : "bg-emerald-100 text-emerald-800 border-emerald-300"
+              )}>
+                {paymentStatus === 'unpaid' ? 'Belum Lunas / Kasbon' : 'Lunas'}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setPaymentStatus('paid')}
+                className={cn(
+                  "p-2.5 rounded-xl border text-center transition-all flex items-center justify-center gap-2 cursor-pointer font-black text-xs",
+                  paymentStatus === 'paid'
+                    ? "bg-emerald-600 text-white border-emerald-600 shadow-sm ring-2 ring-emerald-200"
+                    : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                )}
+              >
+                <Check size={16} />
+                <span>Lunas (Dibayar Sekarang)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaymentStatus('unpaid')}
+                className={cn(
+                  "p-2.5 rounded-xl border text-center transition-all flex items-center justify-center gap-2 cursor-pointer font-black text-xs",
+                  paymentStatus === 'unpaid'
+                    ? "bg-rose-600 text-white border-rose-600 shadow-sm ring-2 ring-rose-200"
+                    : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                )}
+              >
+                <AlertCircle size={16} />
+                <span>Belum Lunas (Bayar Nanti)</span>
+              </button>
+            </div>
+          </div>
+
           {/* Payment Method Selector */}
           <div className="space-y-2">
             <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
@@ -443,21 +497,38 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           )}
 
           {/* Optional Customer Phone for WhatsApp Receipt */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-600 flex items-center justify-between">
-              <span className="flex items-center gap-1.5">
-                <Phone size={13} className="text-emerald-600" />
-                Nomor WhatsApp Pelanggan (Opsional)
-              </span>
-              <span className="text-[10px] text-slate-400 font-normal">Untuk kirim nota WA otomatis</span>
-            </label>
+          <div className="space-y-2 p-3.5 bg-emerald-50/70 rounded-2xl border border-emerald-100">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                <Phone size={14} className="text-emerald-600" />
+                <span>Nomor WhatsApp Pelanggan (Opsional)</span>
+              </label>
+              {customerPhone.trim() ? (
+                <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-200">
+                  {formatPhoneNumberDisplay(customerPhone)}
+                </span>
+              ) : (
+                <span className="text-[10px] text-slate-400">Kirim nota via WA</span>
+              )}
+            </div>
             <input
               type="tel"
-              placeholder="Contoh: 08123456789 (opsional)"
+              placeholder="Contoh: 08123456789 atau 62812..."
               value={customerPhone}
               onChange={(e) => setCustomerPhone(e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-blue-500 focus:bg-white rounded-xl outline-none text-xs font-semibold text-slate-800 transition-all placeholder:text-slate-400 placeholder:font-normal"
+              className="w-full px-3.5 py-2.5 bg-white border border-emerald-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 rounded-xl outline-none text-xs font-bold text-slate-800 transition-all placeholder:text-slate-400 placeholder:font-normal"
             />
+            {customerPhone.trim() && (
+              <label className="flex items-center gap-2 cursor-pointer pt-0.5 text-[11px] font-semibold text-emerald-900 select-none">
+                <input
+                  type="checkbox"
+                  checked={autoSendWhatsApp}
+                  onChange={(e) => setAutoSendWhatsApp(e.target.checked)}
+                  className="rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
+                />
+                <span>Kirim ringkasan nota otomatis via link WhatsApp setelah bayar</span>
+              </label>
+            )}
           </div>
         </div>
 

@@ -27,6 +27,7 @@ export interface CarCategoryPreset {
 }
 
 export type PaymentMethod = 'cash' | 'qris' | 'transfer' | 'debit';
+export type PaymentStatus = 'paid' | 'unpaid';
 
 export type WageType = 'split_unit_pool' | 'commission_fixed' | 'commission_percentage' | 'daily';
 
@@ -38,7 +39,7 @@ export interface WageUnitConfig {
 }
 
 export const INITIAL_WAGE_UNIT_CONFIG: WageUnitConfig = {
-  carUnitWage: 15000, // Rp 15.000 per mobil (dibagi rata ke jumlah washer yang mencuci)
+  carUnitWage: 10000, // Rp 10.000 per mobil (dibagi rata ke jumlah washer yang mencuci)
   motorUnitWage: 5000,  // Rp 5.000 per motor (dibagi rata ke jumlah washer yang mencuci)
   wageModel: 'fixed_per_unit',
   percentageRate: 25,
@@ -71,6 +72,7 @@ export interface Transaction {
   size?: VehicleSize;
   price: number; // Total price
   paymentMethod?: PaymentMethod;
+  paymentStatus?: PaymentStatus;
   amountPaid?: number;
   changeAmount?: number;
   customerPhone?: string;
@@ -181,7 +183,7 @@ export function calculateSplitUnitWage(
     if (vehicleTypeId === 'motor') {
       totalUnitWage = config.motorUnitWage !== undefined ? config.motorUnitWage : 5000;
     } else {
-      totalUnitWage = config.carUnitWage !== undefined ? config.carUnitWage : 15000;
+      totalUnitWage = config.carUnitWage !== undefined ? config.carUnitWage : 10000;
     }
   }
 
@@ -198,13 +200,13 @@ export function calculateEmployeeWage(
 ): number {
   if (!employee) return 0;
   if (employee.wageType === 'split_unit_pool') {
-    return vehicleTypeId === 'motor' ? (config.motorUnitWage || 5000) : (config.carUnitWage || 15000);
+    return vehicleTypeId === 'motor' ? (config.motorUnitWage || 5000) : (config.carUnitWage || 10000);
   }
   if (employee.wageType === 'commission_fixed') {
     if (vehicleTypeId === 'motor') {
       return employee.motorWageAmount !== undefined ? employee.motorWageAmount : (config.motorUnitWage || 5000);
     }
-    return employee.wageAmount || (config.carUnitWage || 15000);
+    return employee.wageAmount || (config.carUnitWage || 10000);
   }
   if (employee.wageType === 'commission_percentage') {
     return Math.round((washPrice * (employee.wageAmount || config.percentageRate || 25)) / 100);

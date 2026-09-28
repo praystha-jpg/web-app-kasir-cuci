@@ -39,7 +39,8 @@ import {
   Lock,
   ShieldCheck,
   LogOut,
-  KeyRound
+  KeyRound,
+  AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -62,6 +63,7 @@ import {
   type Drink, 
   type CarCategoryPreset,
   type PaymentMethod,
+  type PaymentStatus,
   type Employee,
   type WageUnitConfig,
   type AssignedEmployee,
@@ -80,6 +82,8 @@ import {
 } from './lib/utils';
 import { PaymentModal } from './components/PaymentModal';
 import { ReceiptModal } from './components/ReceiptModal';
+import { EditTransactionModal } from './components/EditTransactionModal';
+import { openWhatsAppReceipt } from './lib/whatsapp';
 import { DriveSyncManager } from './components/DriveSyncManager';
 import { EmployeeManager } from './components/EmployeeManager';
 import { ProfitReport } from './components/ProfitReport';
@@ -190,7 +194,20 @@ export default function App() {
   });
   const [wageUnitConfig, setWageUnitConfig] = useState<WageUnitConfig>(() => {
     const saved = localStorage.getItem('wageUnitConfig');
-    return saved ? JSON.parse(saved) : INITIAL_WAGE_UNIT_CONFIG;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.carUnitWage === 15000) {
+          parsed.carUnitWage = 10000;
+          parsed.motorUnitWage = 5000;
+          localStorage.setItem('wageUnitConfig', JSON.stringify(parsed));
+        }
+        return parsed;
+      } catch {
+        return INITIAL_WAGE_UNIT_CONFIG;
+      }
+    }
+    return INITIAL_WAGE_UNIT_CONFIG;
   });
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('');
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
@@ -215,8 +232,11 @@ export default function App() {
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [activeReceiptTransaction, setActiveReceiptTransaction] = useState<Transaction | null>(null);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   // Filter states for Histori Transaksi
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<'all' | 'paid' | 'unpaid'>('all');
   const [historyPlateQuery, setHistoryPlateQuery] = useState('');
   const [historyDatePreset, setHistoryDatePreset] = useState<'all' | 'today' | 'last7' | 'thisMonth' | 'custom'>('all');
   const [historyStartDate, setHistoryStartDate] = useState('');
@@ -431,6 +451,7 @@ export default function App() {
   // Called when payment is confirmed in the popup
   const handleConfirmPayment = (paymentDetails: {
     paymentMethod: PaymentMethod;
+    paymentStatus?: PaymentStatus;
     amountPaid: number;
     changeAmount: number;
     customerPhone: string;
@@ -441,6 +462,7 @@ export default function App() {
     assignedEmployees?: AssignedEmployee[];
     totalUnitWage?: number;
     wagePerPerson?: number;
+    autoSendWhatsApp?: boolean;
   }) => {
     if (!selectedVehicle && drinkCart.length === 0) return;
 
@@ -481,6 +503,7 @@ export default function App() {
       size: selectedSize || undefined,
       price: totalPrice,
       paymentMethod: paymentDetails.paymentMethod,
+      paymentStatus: paymentDetails.paymentStatus || 'paid',
       amountPaid: paymentDetails.amountPaid,
       changeAmount: paymentDetails.changeAmount,
       customerPhone: paymentDetails.customerPhone || undefined,
@@ -514,6 +537,32 @@ export default function App() {
     // Open receipt modal right away
     setActiveReceiptTransaction(newTransaction);
     setIsReceiptModalOpen(true);
+
+    // Kirim otomatis ringkasan nota via link WhatsApp jika nomor telepon diisi saat pembayaran
+    if (paymentDetails.customerPhone?.trim() && paymentDetails.autoSendWhatsApp !== false) {
+      openWhatsAppReceipt(newTransaction, { shopName, shopAddress, shopPhone });
+    }
+  };
+
+  const handleUpdateTransaction = (updatedTx: Transaction) => {
+    setTransactions(prev => prev.map(t => t.id === updatedTx.id ? updatedTx : t));
+    if (firebaseUser) {
+      syncSaveTransaction(updatedTx).catch(err => console.error('Cloud tx update err:', err));
+    }
+  };
+
+  const handleTogglePaymentStatus = (txId: string) => {
+    setTransactions(prev => prev.map(t => {
+      if (t.id === txId) {
+        const nextStatus: PaymentStatus = (t.paymentStatus === 'unpaid') ? 'paid' : 'unpaid';
+        const updated: Transaction = { ...t, paymentStatus: nextStatus };
+        if (firebaseUser) {
+          syncSaveTransaction(updated).catch(err => console.error('Cloud tx status toggle err:', err));
+        }
+        return updated;
+      }
+      return t;
+    }));
   };
 
   const deleteTransaction = (id: string) => {
@@ -589,13 +638,15 @@ export default function App() {
       alert('Tidak ada data untuk diunduh');
       return;
     }
-    const headers = ['ID', 'Tipe/Plat', 'Kategori Mobil', 'Detail Pesanan', 'Total Harga', 'Petugas Cuci', 'Komisi Karyawan', 'Tanggal'];
+    const headers = ['ID', 'Tipe/Plat', 'Kategori Mobil', 'Detail Pesanan', 'Total Harga', 'Status Bayar', 'Metode Bayar', 'Petugas Cuci', 'Komisi Karyawan', 'Tanggal'];
     const rows = data.map(t => [
       t.id,
       t.plateNumber || '-',
       t.carCategory || '-',
       t.items.map(i => `${i.name} x${i.quantity}`).join(" | "),
       t.price,
+      t.paymentStatus === 'unpaid' ? 'Belum Lunas' : 'Lunas',
+      t.paymentMethod || 'cash',
       t.employeeName || '-',
       t.employeeWage || 0,
       format(parseISO(t.timestamp), 'yyyy-MM-dd HH:mm:ss')
@@ -658,15 +709,24 @@ export default function App() {
     setHistoryDatePreset('all');
     setHistoryStartDate('');
     setHistoryEndDate('');
+    setHistoryStatusFilter('all');
   };
 
   const isHistoryFilterActive = Boolean(
-    historyPlateQuery.trim() || historyStartDate || historyEndDate || historyDatePreset !== 'all'
+    historyPlateQuery.trim() || historyStartDate || historyEndDate || historyDatePreset !== 'all' || historyStatusFilter !== 'all'
   );
 
   const filteredHistoryTransactions = useMemo(() => {
     return transactions.filter((t) => {
-      // 1. Filter Plat Nomor (case-insensitive & space-insensitive)
+      // 1. Filter Status Pembayaran (paid / unpaid)
+      if (historyStatusFilter !== 'all') {
+        const txStatus = t.paymentStatus || 'paid';
+        if (txStatus !== historyStatusFilter) {
+          return false;
+        }
+      }
+
+      // 2. Filter Plat Nomor (case-insensitive & space-insensitive)
       if (historyPlateQuery.trim()) {
         const queryNorm = historyPlateQuery.replace(/\s+/g, '').toUpperCase();
         const plateNorm = (t.plateNumber || '').replace(/\s+/g, '').toUpperCase();
@@ -675,7 +735,7 @@ export default function App() {
         }
       }
 
-      // 2. Filter Rentang Tanggal (format YYYY-MM-DD)
+      // 3. Filter Rentang Tanggal (format YYYY-MM-DD)
       if (historyStartDate || historyEndDate) {
         const txDateStr = format(parseISO(t.timestamp), 'yyyy-MM-dd');
         if (historyStartDate && txDateStr < historyStartDate) {
@@ -688,15 +748,19 @@ export default function App() {
 
       return true;
     });
-  }, [transactions, historyPlateQuery, historyStartDate, historyEndDate]);
+  }, [transactions, historyStatusFilter, historyPlateQuery, historyStartDate, historyEndDate]);
 
   const historyMetrics = useMemo(() => {
     const totalRevenue = filteredHistoryTransactions.reduce((acc, t) => acc + (t.price || 0), 0);
     const washCount = filteredHistoryTransactions.filter(t => t.items.some(i => i.category === 'wash')).length;
+    const unpaidCount = filteredHistoryTransactions.filter(t => t.paymentStatus === 'unpaid').length;
+    const paidCount = filteredHistoryTransactions.length - unpaidCount;
     return {
       count: filteredHistoryTransactions.length,
       totalRevenue,
       washCount,
+      unpaidCount,
+      paidCount,
     };
   }, [filteredHistoryTransactions]);
 
@@ -993,7 +1057,7 @@ export default function App() {
                         placeholder={selectedVehicle.id === 'mobil' 
                           ? "Ketik tipe mobil (contoh: Avanza, Brio, Innova, HR-V...)" 
                           : "Ketik tipe motor (contoh: Beat, Vario, NMAX, Scoopy...)"}
-                        className="w-full bg-transparent outline-none font-semibold text-slate-800 text-sm placeholder:text-slate-300 placeholder:font-normal"
+                        className="w-full bg-transparent outline-none font-bold text-black text-sm placeholder:text-slate-500 placeholder:font-normal"
                         value={carCategory}
                         onChange={(e) => handleCarCategoryChange(e.target.value)}
                       />
@@ -1081,15 +1145,15 @@ export default function App() {
                   animate={{ opacity: 1, x: 0 }}
                   className="space-y-4"
                 >
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">4. Nomor Plat Kendaraan</h3>
-                  <div className="glass-card p-2 rounded-2xl bg-white flex items-center gap-2 border border-slate-200/80">
-                    <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400">
+                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-black">4. Nomor Plat Kendaraan</h3>
+                  <div className="glass-card p-2 rounded-2xl bg-white flex items-center gap-2 border border-slate-300">
+                    <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-slate-700">
                        <Clock size={20} />
                     </div>
                     <input 
                        type="text" 
                        placeholder="Masukkan Plat Nomor Kendaraan (Contoh: B 1234 ABC)"
-                       className="flex-1 bg-transparent p-3 outline-none font-bold text-slate-700 placeholder:text-slate-300 uppercase"
+                       className="flex-1 bg-transparent p-3 outline-none font-bold text-black placeholder:text-slate-500 uppercase"
                        value={plateNumber}
                        onChange={(e) => setPlateNumber(e.target.value)}
                     />
@@ -1286,25 +1350,25 @@ export default function App() {
                       <ShoppingCart size={28} />
                     </div>
                     <div>
-                      <p className="text-white/80 text-sm">Review Pesanan & Total</p>
-                      <div className="flex flex-wrap gap-2 mt-1">
+                      <p className="text-white font-extrabold text-base tracking-tight drop-shadow-xs">Review Pesanan & Total</p>
+                      <div className="flex flex-wrap gap-2 mt-1.5">
                         {selectedVehicle && (
-                          <span className="text-[10px] font-bold uppercase tracking-wider bg-white/10 px-2 py-1 rounded text-white">
+                          <span className="text-xs font-black uppercase tracking-wider bg-white text-blue-900 px-2.5 py-1 rounded-lg shadow-sm border border-white/40">
                             {selectedVehicle.name} ({selectedSize})
                           </span>
                         )}
                         {carCategory && (
-                          <span className="text-[10px] font-bold uppercase tracking-wider bg-white/20 px-2 py-1 rounded text-white flex items-center gap-1">
-                            <Tag size={10} /> {carCategory}
+                          <span className="text-xs font-black uppercase tracking-wider bg-white text-blue-900 px-2.5 py-1 rounded-lg shadow-sm border border-white/40 flex items-center gap-1">
+                            <Tag size={12} className="text-blue-700" /> {carCategory}
                           </span>
                         )}
                         {selectedEmployeeIds.length > 0 && (
-                          <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-400/30 text-amber-100 border border-amber-300/30 px-2 py-1 rounded flex items-center gap-1">
-                            <Users size={10} /> {selectedEmployeeIds.length} Washer: {employees.filter(e => selectedEmployeeIds.includes(e.id)).map(e => e.name).join(', ')}
+                          <span className="text-xs font-black uppercase tracking-wider bg-amber-300 text-amber-950 px-2.5 py-1 rounded-lg shadow-sm border border-amber-400 flex items-center gap-1">
+                            <Users size={12} /> {selectedEmployeeIds.length} Washer: {employees.filter(e => selectedEmployeeIds.includes(e.id)).map(e => e.name).join(', ')}
                           </span>
                         )}
                         {drinkCart.map(item => (
-                          <span key={item.drink.id} className="text-[10px] font-bold uppercase tracking-wider bg-white/10 px-2 py-1 rounded text-white">
+                          <span key={item.drink.id} className="text-xs font-black uppercase tracking-wider bg-white text-blue-900 px-2.5 py-1 rounded-lg shadow-sm border border-white/40">
                             {item.drink.name} x{item.quantity}
                           </span>
                         ))}
@@ -1314,8 +1378,8 @@ export default function App() {
                   
                   <div className="flex items-center gap-6 w-full sm:w-auto justify-between sm:justify-end">
                     <div className="text-right">
-                      <p className="text-white/60 text-[10px] font-bold uppercase tracking-widest">Total Bayar</p>
-                      <p className="text-3xl font-display font-bold">
+                      <p className="text-white font-black text-xs uppercase tracking-wider drop-shadow-xs">Total Bayar</p>
+                      <p className="text-3xl sm:text-4xl font-display font-black text-white tracking-tight drop-shadow-sm">
                         {formatCurrency(currentTotal)}
                       </p>
                     </div>
@@ -1340,15 +1404,15 @@ export default function App() {
               className="space-y-4"
             >
               {/* Filter Card: Pencarian Plat Nomor & Rentang Tanggal */}
-              <div className="glass-card p-4 sm:p-5 rounded-3xl bg-white border border-slate-200/80 shadow-xs space-y-4">
+              <div className="glass-card p-4 sm:p-5 rounded-3xl bg-white border border-slate-300 shadow-xs space-y-4 text-black">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+                    <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
                       <Filter size={20} />
                     </div>
                     <div>
-                      <h3 className="font-bold text-slate-800 text-sm sm:text-base">Filter Riwayat Layanan</h3>
-                      <p className="text-xs text-slate-400">Cari berdasarkan nomor plat kendaraan & rentang tanggal</p>
+                      <h3 className="font-extrabold text-black text-sm sm:text-base">Filter Riwayat Layanan</h3>
+                      <p className="text-xs text-black font-medium">Cari berdasarkan nomor plat kendaraan & rentang tanggal</p>
                     </div>
                   </div>
 
@@ -1357,7 +1421,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={handleResetHistoryFilter}
-                        className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold transition-colors flex items-center gap-1.5"
+                        className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-black text-xs font-bold transition-colors flex items-center gap-1.5 border border-slate-300"
                         title="Reset semua filter pencarian"
                       >
                         <RotateCcw size={13} />
@@ -1368,7 +1432,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={exportFilteredHistory}
-                        className="px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold transition-colors flex items-center gap-1.5 border border-blue-200"
+                        className="px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-900 text-xs font-bold transition-colors flex items-center gap-1.5 border border-blue-200"
                         title="Ekspor data hasil filter ke CSV"
                       >
                         <Download size={13} />
@@ -1381,11 +1445,11 @@ export default function App() {
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-3 pt-1">
                   {/* Pencarian Plat Nomor */}
                   <div className="md:col-span-5">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
+                    <label className="text-xs font-extrabold text-black uppercase tracking-wider block mb-1.5">
                       Cari Nomor Plat
                     </label>
                     <div className="relative flex items-center">
-                      <div className="absolute left-3.5 text-slate-400 pointer-events-none">
+                      <div className="absolute left-3.5 text-black pointer-events-none">
                         <Search size={16} />
                       </div>
                       <input
@@ -1393,13 +1457,13 @@ export default function App() {
                         value={historyPlateQuery}
                         onChange={(e) => setHistoryPlateQuery(e.target.value)}
                         placeholder="Ketik plat (contoh: DK 1234 AB)..."
-                        className="w-full pl-9 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 uppercase placeholder:normal-case placeholder:font-normal placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                        className="w-full pl-9 pr-9 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm font-bold text-black uppercase placeholder:normal-case placeholder:font-normal placeholder:text-slate-600 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
                       />
                       {historyPlateQuery && (
                         <button
                           type="button"
                           onClick={() => setHistoryPlateQuery('')}
-                          className="absolute right-3 text-slate-400 hover:text-slate-600 p-0.5"
+                          className="absolute right-3 text-slate-500 hover:text-black p-0.5"
                           title="Hapus pencarian plat"
                         >
                           <X size={14} />
@@ -1410,12 +1474,12 @@ export default function App() {
 
                   {/* Rentang Tanggal: Input Dari & Sampai */}
                   <div className="md:col-span-7">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
+                    <label className="text-xs font-extrabold text-black uppercase tracking-wider block mb-1.5">
                       Rentang Tanggal
                     </label>
                     <div className="grid grid-cols-2 gap-2">
                       <div className="relative flex items-center">
-                        <div className="absolute left-3 text-slate-400 pointer-events-none">
+                        <div className="absolute left-3 text-black pointer-events-none">
                           <Calendar size={15} />
                         </div>
                         <input
@@ -1425,12 +1489,12 @@ export default function App() {
                             setHistoryStartDate(e.target.value);
                             setHistoryDatePreset('custom');
                           }}
-                          className="w-full pl-9 pr-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                          className="w-full pl-9 pr-2 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-black outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
                           title="Dari Tanggal"
                         />
                       </div>
                       <div className="relative flex items-center">
-                        <div className="absolute left-3 text-slate-400 pointer-events-none">
+                        <div className="absolute left-3 text-black pointer-events-none">
                           <Calendar size={15} />
                         </div>
                         <input
@@ -1440,7 +1504,7 @@ export default function App() {
                             setHistoryEndDate(e.target.value);
                             setHistoryDatePreset('custom');
                           }}
-                          className="w-full pl-9 pr-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                          className="w-full pl-9 pr-2 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-black outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
                           title="Sampai Tanggal"
                         />
                       </div>
@@ -1449,8 +1513,8 @@ export default function App() {
                 </div>
 
                 {/* Preset Tombol Rentang Tanggal Cepat */}
-                <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-slate-100">
-                  <span className="text-[11px] font-semibold text-slate-400 mr-1">Pilihan Cepat:</span>
+                <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-slate-200">
+                  <span className="text-xs font-extrabold text-black mr-1">Pilihan Cepat:</span>
                   {[
                     { id: 'all', label: 'Semua Tanggal' },
                     { id: 'today', label: 'Hari Ini' },
@@ -1464,10 +1528,10 @@ export default function App() {
                         type="button"
                         onClick={() => handleSelectDatePreset(preset.id as any)}
                         className={cn(
-                          "px-2.5 py-1 rounded-lg text-xs font-bold transition-all",
+                          "px-2.5 py-1 rounded-lg text-xs font-bold transition-all border",
                           isActive
-                            ? "bg-blue-600 text-white shadow-xs"
-                            : "bg-slate-100 hover:bg-slate-200 text-slate-600"
+                            ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                            : "bg-slate-100 hover:bg-slate-200 text-black border-slate-300"
                         )}
                       >
                         {preset.label}
@@ -1475,31 +1539,71 @@ export default function App() {
                     );
                   })}
                   {historyDatePreset === 'custom' && (historyStartDate || historyEndDate) && (
-                    <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                    <span className="text-[11px] font-bold text-amber-800 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-300">
                       Rentang Kustom
                     </span>
                   )}
                 </div>
 
+                {/* Filter Status Pembayaran (Lunas / Belum Lunas) */}
+                <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-slate-200">
+                  <span className="text-xs font-extrabold text-black mr-1">Status Bayar:</span>
+                  {[
+                    { id: 'all', label: `Semua Status (${transactions.length})` },
+                    { id: 'paid', label: `Lunas (${transactions.filter(t => t.paymentStatus !== 'unpaid').length})`, icon: CheckCircle2 },
+                    { id: 'unpaid', label: `Belum Lunas (${transactions.filter(t => t.paymentStatus === 'unpaid').length})`, icon: AlertCircle, isUnpaid: true },
+                  ].map((statusTab) => {
+                    const isActive = historyStatusFilter === statusTab.id;
+                    const unpaidHasItems = statusTab.isUnpaid && transactions.some(t => t.paymentStatus === 'unpaid');
+                    const Icon = statusTab.icon;
+                    return (
+                      <button
+                        key={statusTab.id}
+                        type="button"
+                        onClick={() => setHistoryStatusFilter(statusTab.id as any)}
+                        className={cn(
+                          "px-2.5 py-1 rounded-lg text-xs font-bold transition-all border flex items-center gap-1.5 cursor-pointer",
+                          isActive
+                            ? statusTab.isUnpaid
+                              ? "bg-rose-600 text-white border-rose-600 shadow-xs"
+                              : "bg-blue-600 text-white border-blue-600 shadow-xs"
+                            : statusTab.isUnpaid && unpaidHasItems
+                              ? "bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-300 font-extrabold"
+                              : "bg-slate-100 hover:bg-slate-200 text-black border-slate-300"
+                        )}
+                      >
+                        {Icon && <Icon size={13} />}
+                        <span>{statusTab.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
                 {/* Bar Ringkasan Hasil Filter */}
-                <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-slate-500">
-                      Menemukan <strong className="text-slate-800 font-bold">{historyMetrics.count}</strong> dari {transactions.length} transaksi
+                <div className="pt-2 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2 flex-wrap text-black">
+                    <span className="font-semibold text-black">
+                      Menemukan <strong className="text-black font-extrabold">{historyMetrics.count}</strong> dari {transactions.length} transaksi
                     </span>
                     {historyPlateQuery.trim() && (
-                      <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full font-bold text-[10px] border border-blue-100 uppercase">
+                      <span className="px-2 py-0.5 bg-blue-100 text-blue-900 rounded-full font-extrabold text-[10px] border border-blue-300 uppercase">
                         Plat: {historyPlateQuery}
                       </span>
                     )}
                     {historyMetrics.washCount > 0 && (
-                      <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded-full font-semibold text-[10px]">
+                      <span className="px-2 py-0.5 bg-slate-200 text-black rounded-full font-bold text-[10px]">
                         {historyMetrics.washCount} Cuci
                       </span>
                     )}
+                    {historyMetrics.unpaidCount > 0 && (
+                      <span className="px-2 py-0.5 bg-rose-100 text-rose-800 rounded-full font-extrabold text-[10px] border border-rose-300 flex items-center gap-1">
+                        <AlertCircle size={11} className="text-rose-600" />
+                        {historyMetrics.unpaidCount} Belum Lunas
+                      </span>
+                    )}
                   </div>
-                  <div className="font-bold text-slate-700">
-                    Total: <span className="text-blue-600 font-display font-bold text-sm">{formatCurrency(historyMetrics.totalRevenue)}</span>
+                  <div className="font-extrabold text-black">
+                    Total: <span className="text-blue-700 font-display font-extrabold text-sm">{formatCurrency(historyMetrics.totalRevenue)}</span>
                   </div>
                 </div>
               </div>
@@ -1594,12 +1698,66 @@ export default function App() {
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <div className="text-right">
+                      <div className="text-right flex flex-col items-end gap-1">
                         <p className="font-display font-bold text-slate-800">{formatCurrency(t.price)}</p>
-                        <span className="text-[10px] font-bold uppercase text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
-                          {t.paymentMethod === 'cash' ? 'Tunai' : t.paymentMethod === 'qris' ? 'QRIS' : t.paymentMethod === 'transfer' ? 'Transfer' : 'Tunai'}
-                        </span>
+                        
+                        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                          {/* Badge Status Pembayaran (Lunas / Belum Lunas) dengan Tombol Cepat Ubah */}
+                          <button
+                            type="button"
+                            onClick={() => handleTogglePaymentStatus(t.id)}
+                            className={cn(
+                              "px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1 border transition-all cursor-pointer shadow-xs active:scale-95",
+                              t.paymentStatus === 'unpaid'
+                                ? "bg-rose-100 hover:bg-rose-200 text-rose-800 border-rose-300 ring-2 ring-rose-400/20 animate-pulse"
+                                : "bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border-emerald-300"
+                            )}
+                            title={`Status: ${t.paymentStatus === 'unpaid' ? 'Belum Lunas' : 'Lunas'}. Klik untuk ubah menjadi ${t.paymentStatus === 'unpaid' ? 'Lunas' : 'Belum Lunas'}.`}
+                          >
+                            {t.paymentStatus === 'unpaid' ? (
+                              <>
+                                <AlertCircle size={11} className="text-rose-600" />
+                                <span>Belum Lunas</span>
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle2 size={11} className="text-emerald-600" />
+                                <span>Lunas</span>
+                              </>
+                            )}
+                          </button>
+
+                          <span className="text-[10px] font-bold uppercase text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                            {t.paymentMethod === 'cash' ? 'Tunai' : t.paymentMethod === 'qris' ? 'QRIS' : t.paymentMethod === 'transfer' ? 'Transfer' : 'Tunai'}
+                          </span>
+                        </div>
                       </div>
+
+                      {/* Tombol Aksi Cepat Set Lunas jika Belum Lunas */}
+                      {t.paymentStatus === 'unpaid' && (
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePaymentStatus(t.id)}
+                          className="px-2.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1 shrink-0 active:scale-95"
+                          title="Tandai pesanan ini sudah Lunas"
+                        >
+                          <CheckCircle2 size={14} />
+                          <span className="hidden sm:inline">Set Lunas</span>
+                        </button>
+                      )}
+
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setEditingTransaction(t);
+                          setIsEditModalOpen(true);
+                        }}
+                        className="p-2 text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-xl transition-colors flex items-center gap-1 text-xs font-bold border border-amber-200"
+                        title="Edit Data Transaksi & Status Pembayaran"
+                      >
+                        <Edit3 size={16} />
+                        <span className="hidden sm:inline">Edit</span>
+                      </button>
                       <button 
                         type="button"
                         onClick={() => {
@@ -2009,6 +2167,23 @@ export default function App() {
         shopName={shopName}
         shopAddress={shopAddress}
         shopPhone={shopPhone}
+      />
+
+      {/* Modal Edit Transaksi */}
+      <EditTransactionModal
+        isOpen={isEditModalOpen}
+        transaction={editingTransaction}
+        onClose={() => {
+          setIsEditModalOpen(false);
+          setEditingTransaction(null);
+        }}
+        onSave={handleUpdateTransaction}
+        vehicleTypes={vehicleTypes}
+        employees={employees}
+        drinks={drinks}
+        carCategories={carCategories}
+        motorCategories={motorCategories}
+        wageUnitConfig={wageUnitConfig}
       />
 
       {/* Dialog Verifikasi PIN Admin untuk Akses Menu Terbatas */}
